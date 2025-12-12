@@ -366,6 +366,14 @@ struct kmem_cache_args {
 	 * %0 means no sheaves will be created.
 	 */
 	unsigned int sheaf_capacity;
+	/**
+	 * tracks the
+	 */
+	const int *node_offsets;
+	/**
+	 * tracks the
+	 */
+	unsigned int num_node_offsets;
 };
 
 struct kmem_cache *__kmem_cache_create_args(const char *name,

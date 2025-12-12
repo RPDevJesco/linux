@@ -275,6 +275,8 @@ struct kmem_cache {
 #endif
 
 	struct kmem_cache_node *node[MAX_NUMNODES];
+	int node_offsets[4];
+	unsigned int num_tracked_nodes;
 };
 
 #if defined(CONFIG_SYSFS) && !defined(CONFIG_SLUB_TINY)

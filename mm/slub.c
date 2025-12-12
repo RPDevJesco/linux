@@ -2282,6 +2282,10 @@ __alloc_tagging_slab_free_hook(struct kmem_cache *s, struct slab *slab, void **p
 	struct slabobj_ext *obj_exts;
 	int i;
 
+	/* Check tracked list_heads before any other processing */
+	if (!check_tracked_nodes(s, x))
+		return false;
+
 	/* slab->obj_exts might not be NULL if it was created for MEMCG accounting. */
 	if (s->flags & (SLAB_NO_OBJ_EXT | SLAB_NOLEAKTRACE))
 		return;
@@ -2448,6 +2452,64 @@ struct rcu_delayed_free {
 #endif
 
 /*
+ * Check if a list_head is in an unlinked state.
+ */
+static inline bool list_node_is_unlinked(const struct list_head *node)
+{
+	struct list_head *next = node->next;
+	struct list_head *prev = node->prev;
+
+	/* NULL/NULL - cleanly prepared for reuse */
+	if (next == NULL && prev == NULL)
+		return true;
+
+	/* Poison values from list_del() */
+	if (next == LIST_POISON1 && prev == LIST_POISON2)
+		return true;
+
+	/* Self-referential - initialized but empty list head */
+	if (next == node && prev == node)
+		return true;
+
+	return false;
+}
+
+/*
+ * Check all tracked list_head fields before allowing free.
+ */
+static bool check_tracked_nodes(struct kmem_cache *s, void *object)
+{
+	unsigned int i;
+
+	for (i = 0; i < s->num_tracked_nodes; i++) {
+		struct list_head *node;
+		node = (struct list_head *)((char *)object + s->node_offsets[i]);
+
+		if (!list_node_is_unlinked(node)) {
+			pr_err("SLUB: freeing %s object %px with linked list_head at offset %d\n",
+				   s->name, object, s->node_offsets[i]);
+			return false;
+		}
+	}
+	return true;
+}
+
+/*
+ * Clear tracked list_heads after allocation.
+ */
+static void clear_tracked_nodes(struct kmem_cache *s, void *object)
+{
+	unsigned int i;
+
+	for (i = 0; i < s->num_tracked_nodes; i++) {
+		struct list_head *node;
+		node = (struct list_head *)((char *)object + s->node_offsets[i]);
+		node->next = NULL;
+		node->prev = NULL;
+	}
+}
+
+/*
  * Hooks for other subsystems that check memory allocations. In a typical
  * production configuration these hooks all should produce no code at all.
  *
@@ -2459,6 +2521,9 @@ static __always_inline
 bool slab_free_hook(struct kmem_cache *s, void *x, bool init,
 		    bool after_rcu_delay)
 {
+	if (!check_tracked_nodes(s, x))
+		return false;
+
 	/* Are the object contents still accessible? */
 	bool still_accessible = (s->flags & SLAB_TYPESAFE_BY_RCU) && !after_rcu_delay;
 
@@ -4877,6 +4942,9 @@ redo:
 		prefetch_freepointer(s, next_object);
 		stat(s, ALLOC_FASTPATH);
 	}
+
+	if (object)
+		clear_tracked_nodes(s, object);
 
 	return object;
 }
@@ -8588,6 +8656,12 @@ int do_kmem_cache_create(struct kmem_cache *s, const char *name,
 	s->useroffset = args->useroffset;
 	s->usersize = args->usersize;
 #endif
+
+	if (args->node_offsets && args->num_node_offsets > 0) {
+		s->num_tracked_nodes = min(args->num_node_offsets, 4);
+		for (int i = 0; i < s->num_tracked_nodes; i++)
+			s->node_offsets[i] = args->node_offsets[i];
+	}
 
 	if (!calculate_sizes(args, s))
 		goto out;
