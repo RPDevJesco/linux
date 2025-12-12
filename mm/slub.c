@@ -2282,10 +2282,6 @@ __alloc_tagging_slab_free_hook(struct kmem_cache *s, struct slab *slab, void **p
 	struct slabobj_ext *obj_exts;
 	int i;
 
-	/* Check tracked list_heads before any other processing */
-	if (!check_tracked_nodes(s, x))
-		return false;
-
 	/* slab->obj_exts might not be NULL if it was created for MEMCG accounting. */
 	if (s->flags & (SLAB_NO_OBJ_EXT | SLAB_NOLEAKTRACE))
 		return;
